@@ -1,18 +1,7 @@
-'use client';
+"use client"; // Mark as a Client Component
 
 import { useEffect, useState } from 'react';
 import { WebApp } from '@twa-dev/types';
-import { useRouter } from 'next/navigation';
-
-interface User {
-  telegramId: string;
-  firstName: string;
-  displayName: string; // Add displayName to the User interface
-  gender: string;
-  age: number;
-  points: number;
-  location: string[];
-}
 
 declare global {
   interface Window {
@@ -22,18 +11,35 @@ declare global {
   }
 }
 
-export default function Home() {
+interface User {
+  telegramId: string;
+  firstName: string;
+  gender: string;
+  age: number;
+  points: number;
+  location: string[];
+  sports: { [key: string]: string }; // Sports data (JSON-compatible)
+  matchPreferences: {
+    // Match preferences (JSON-compatible)
+    [key: string]: {
+      ageRange: [number, number];
+      genderPreference: string;
+      skillLevels: string[];
+      locationPreferences: string[];
+    };
+  };
+}
+
+export default function MatchPreferencesPage() {
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: 'validation' | 'success' } | null>(null); // For notifications
-  const [sports, setSports] = useState<{ [key: string]: string }>({});
-  const [gender, setGender] = useState<string>('');
-  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
-  const [displayName, setDisplayName] = useState<string>(''); // New state for displayName
+  const [ageRanges, setAgeRanges] = useState<{ [key: string]: [number, number] }>({}); // Store age ranges for each sport
+  const [genderPreferences, setGenderPreferences] = useState<{ [key: string]: string }>({}); // Store gender preferences for each sport
+  const [skillLevels, setSkillLevels] = useState<{ [key: string]: string[] }>({}); // Store skill levels for each sport
+  const [locationPreferences, setLocationPreferences] = useState<{ [key: string]: string[] }>({}); // Store location preferences for each sport
 
-  const router = useRouter(); // Initialize the router
-
-  /* to add in user if not in the database yet */
+  /* Fetch user data */
   useEffect(() => {
     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
       const tg = window.Telegram.WebApp;
@@ -55,13 +61,33 @@ export default function Home() {
             if (data.error) {
               setError(data.error);
             } else {
-              setUser(data);
-              setDisplayName(data.displayName || ''); // Set displayName from the database
-              setGender(data.gender);
-              setSelectedLocations(data.location || []);
-              setSports(data.sports || {});
-              // Ensure age is set from the database
-              setUser((prevUser) => (prevUser ? { ...prevUser, age: data.age || 18 } : null));
+              // Parse JSON fields if they are stored as strings
+              const sports = typeof data.sports === 'string' ? JSON.parse(data.sports) : data.sports || {};
+              const matchPreferences =
+                typeof data.matchPreferences === 'string'
+                  ? JSON.parse(data.matchPreferences)
+                  : data.matchPreferences || {};
+
+              setUser({ ...data, sports, matchPreferences });
+
+              // Initialize age ranges, gender preferences, skill levels, and location preferences for each sport
+              const initialAgeRanges: { [key: string]: [number, number] } = {};
+              const initialGenderPreferences: { [key: string]: string } = {};
+              const initialSkillLevels: { [key: string]: string[] } = {};
+              const initialLocationPreferences: { [key: string]: string[] } = {};
+
+              Object.keys(sports).forEach((sport) => {
+                const preferences = matchPreferences[sport] || {};
+                initialAgeRanges[sport] = preferences.ageRange || [1, 100];
+                initialGenderPreferences[sport] = preferences.genderPreference || ''; // Default to empty string
+                initialSkillLevels[sport] = preferences.skillLevels || [];
+                initialLocationPreferences[sport] = preferences.locationPreferences || [];
+              });
+
+              setAgeRanges(initialAgeRanges);
+              setGenderPreferences(initialGenderPreferences);
+              setSkillLevels(initialSkillLevels);
+              setLocationPreferences(initialLocationPreferences);
             }
           })
           .catch((err) => {
@@ -75,86 +101,148 @@ export default function Home() {
     }
   }, []);
 
-  /*to save profile data in database*/
-  const handleSaveProfile = async () => {
+  /* Handle age range change for a sport */
+  const handleAgeRangeChange = (sport: string, type: 'min' | 'max', value: string) => {
+    const numericValue = parseInt(value, 10);
+    if (isNaN(numericValue)) return; // Ignore non-numeric input
+
+    setAgeRanges((prev) => ({
+      ...prev,
+      [sport]: type === 'min' ? [numericValue, prev[sport][1]] : [prev[sport][0], numericValue],
+    }));
+  };
+
+  /* Handle gender preference change for a sport */
+  const handleGenderPreferenceChange = (sport: string, preference: string) => {
+    setGenderPreferences((prev) => ({
+      ...prev,
+      [sport]: preference,
+    }));
+  };
+
+  /* Handle skill level change for a sport */
+  const handleSkillLevelChange = (sport: string, level: string, isChecked: boolean) => {
+    setSkillLevels((prev) => {
+      const updatedLevels = isChecked
+        ? [...(prev[sport] || []), level] // Add skill level
+        : (prev[sport] || []).filter((l) => l !== level); // Remove skill level
+      return {
+        ...prev,
+        [sport]: updatedLevels,
+      };
+    });
+  };
+
+  /* Handle location preference change for a sport */
+  const handleLocationPreferenceChange = (sport: string, location: string, isChecked: boolean) => {
+    setLocationPreferences((prev) => {
+      const updatedLocations = isChecked
+        ? [...(prev[sport] || []), location] // Add location
+        : (prev[sport] || []).filter((loc) => loc !== location); // Remove location
+      return {
+        ...prev,
+        [sport]: updatedLocations,
+      };
+    });
+  };
+
+  /* Validate form before submission */
+  const validateForm = () => {
+    for (const sport of Object.keys(user?.sports || {})) {
+      const [minAge, maxAge] = ageRanges[sport] || [1, 100];
+
+      // Validate age range
+      if (isNaN(minAge)) {
+        setNotification({ message: `Minimum age for ${sport} must be a number.`, type: 'validation' });
+        return false;
+      }
+      if (isNaN(maxAge)) {
+        setNotification({ message: `Maximum age for ${sport} must be a number.`, type: 'validation' });
+        return false;
+      }
+      if (minAge < 1 || minAge > 100) {
+        setNotification({ message: `Minimum age for ${sport} must be between 1 and 100.`, type: 'validation' });
+        return false;
+      }
+      if (maxAge < 1 || maxAge > 100) {
+        setNotification({ message: `Maximum age for ${sport} must be between 1 and 100.`, type: 'validation' });
+        return false;
+      }
+      if (minAge > maxAge) {
+        setNotification({ message: `Minimum age for ${sport} cannot be greater than maximum age.`, type: 'validation' });
+        return false;
+      }
+
+      // Validate gender preference
+      if (!genderPreferences[sport]) {
+        setNotification({ message: `Please select a gender preference for ${sport}.`, type: 'validation' });
+        return false;
+      }
+
+      // Validate skill levels
+      if ((skillLevels[sport] || []).length === 0) {
+        setNotification({ message: `Please select at least one skill level for ${sport}.`, type: 'validation' });
+        return false;
+      }
+
+      // Validate location preferences
+      if ((locationPreferences[sport] || []).length === 0) {
+        setNotification({ message: `Please select at least one preferred location for ${sport}.`, type: 'validation' });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  /* Handle form submission */
+  const handleSubmit = async () => {
     if (!user) return;
 
-    // Validate displayName, gender, location, and sports
-    if (!displayName.trim()) {
-      setNotification({ message: 'Please enter your display name.', type: 'validation' });
-      return;
-    }
-    if (!user.gender) {
-      setNotification({ message: 'Please select your gender.', type: 'validation' });
-      return;
-    }
-    if (selectedLocations.length === 0) {
-      setNotification({ message: 'Please select at least one preferred location.', type: 'validation' });
-      return;
-    }
-    if (Object.keys(sports).length === 0) {
-      setNotification({ message: 'Please select at least one sport.', type: 'validation' });
-      return;
+    // Validate form before submission
+    if (!validateForm()) {
+      return; // Stop submission if validation fails
     }
 
+    // Prepare match preferences data
+    const matchPreferences: { [key: string]: any } = {};
+    Object.keys(user.sports || {}).forEach((sport) => {
+      matchPreferences[sport] = {
+        ageRange: ageRanges[sport],
+        genderPreference: genderPreferences[sport],
+        skillLevels: skillLevels[sport],
+        locationPreferences: locationPreferences[sport],
+      };
+    });
+
     try {
-      const currentAge = user.age; // Capture the current age
-      const res = await fetch('/api/save-profile', {
+      const res = await fetch('/api/save-match-preferences', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           telegramId: user.telegramId,
-          displayName: displayName.trim(), // Include displayName in the payload
-          gender: user.gender,
-          location: selectedLocations,
-          age: currentAge, // Use the captured age
-          sports: sports, // Send the sports data
+          matchPreferences, // Send match preferences as JSON
         }),
       });
       const data = await res.json();
 
       if (data.success) {
-        setUser({ ...user, displayName: displayName.trim(), gender: data.gender, location: selectedLocations, age: data.age });
-        setNotification({ message: 'Profile saved successfully!', type: 'success' });
-        setTimeout(() => setNotification(null), 3000);
+        setNotification({ message: 'Match preferences saved successfully!', type: 'success' });
+        setTimeout(() => {
+          setNotification(null); // Clear notification
 
-        // Navigate to /about/match-preferences after saving
-        router.push('/about/match-preferences');
+          // Close the Telegram Web App
+          if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+            window.Telegram.WebApp.close();
+          }
+        }, 1000);
       } else {
-        setError('Failed to save profile');
+        setNotification({ message: 'Failed to save match preferences', type: 'validation' });
       }
     } catch (err) {
-      setError('An error occurred while saving profile');
+      setNotification({ message: 'An error occurred while saving match preferences', type: 'validation' });
     }
-  };
-
-  /*update sports choices*/
-  const handleSportChange = (sport: string, selected: boolean) => {
-    if (selected) {
-      setSports((prev) => ({ ...prev, [sport]: 'Newbie' }));
-    } else {
-      setSports((prev) => {
-        const newSports = { ...prev };
-        delete newSports[sport];
-        return newSports;
-      });
-    }
-  };
-
-  /*update skill level*/
-  const handleSkillLevelChange = (sport: string, level: string) => {
-    setSports((prev) => ({ ...prev, [sport]: level }));
-  };
-
-  /*handle location change*/
-  const handleLocationChange = (location: string) => {
-    setSelectedLocations((prevLocations) =>
-      prevLocations.includes(location)
-        ? prevLocations.filter((loc) => loc !== location)
-        : [...prevLocations, location]
-    );
   };
 
   if (error) {
@@ -165,128 +253,117 @@ export default function Home() {
 
   return (
     <div className="container mx-auto p-4 text-black min-h-screen relative" style={{ backgroundColor: '#d9f8e1' }}>
-      <h1 className="text-2xl font-bold mb-4">Welcome, {user.firstName}!</h1>
-      <h2 className="text-2xl font-bold mb-4">Profile Page</h2>
+      <h1 className="text-2xl font-bold mb-4">Match Preferences</h1>
 
-      {/* Display Name Input */}
-      <div className="mt-6">
-        <label className="block text-lg font-medium mb-2">What is your display name?</label>
-        <input
-          type="text"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.currentTarget.blur(); // Close the keyboard
-            }
-          }}
-          placeholder="Enter your display name"
-          className="w-full p-2 border rounded"
-        />
-      </div>
+      {/* Loop through the user's selected sports */}
+      {Object.keys(user.sports || {}).map((sport) => (
+        <div key={sport} className="mb-6">
+          <h2 className="text-xl font-semibold mb-2">{sport}</h2>
 
-      {/* Age Slider */}
-      <div className="mt-6">
-        <label className="block text-lg font-medium mb-2">What is your age?</label>
-        <input
-          type="range"
-          min="1"
-          max="100"
-          value={user.age || 18} // Default to 18 if age is not set
-          onChange={(e) => setUser({ ...user, age: Number(e.target.value) })} // Convert to number
-          className="w-full cursor-pointer"
-        />
-        <p className="mt-2 text-center text-lg font-semibold">{user.age || 18} years old</p>
-      </div>
-
-      {/* Gender Selection */}
-      <div className="mt-6">
-        <label className="block text-lg font-medium mb-2">What is your gender?</label>
-        <div className="flex items-center gap-6">
-          <label className="flex items-center">
-            <input
-              type="radio"
-              name="gender"
-              value="Male"
-              checked={user.gender === 'Male'}
-              onChange={(e) => {
-                setUser({ ...user, gender: e.target.value });
-                setGender(e.target.value); // ✅ Correctly updates gender state
-              }}
-              className="mr-2"
-            />
-            Male
-          </label>
-          <label className="flex items-center">
-            <input
-              type="radio"
-              name="gender"
-              value="Female"
-              checked={user.gender === 'Female'}
-              onChange={(e) => {
-                setUser({ ...user, gender: e.target.value });
-                setGender(e.target.value); // ✅ Correctly updates gender state
-              }}
-              className="mr-2"
-            />
-            Female
-          </label>
-        </div>
-      </div>
-
-      {/* Preferred Location Selection */}
-      <div className="mt-6">
-        <label className="block text-lg font-medium mb-2">Where is your preferred location for games?</label>
-        {['North', 'South', 'East', 'West', 'Central'].map((location) => (
-          <div key={location} className="flex items-center gap-2 mb-2">
-            <input
-              type="checkbox"
-              checked={selectedLocations.includes(location)}
-              onChange={() => handleLocationChange(location)}
-              className="mr-2"
-            />
-            {location}
-          </div>
-        ))}
-      </div>
-
-      {/* Sports Selection */}
-      <div className="mt-6">
-        <label className="block text-lg font-medium mb-2">What sports do you play?</label>
-        {['Tennis', 'Badminton', 'Table Tennis', 'Pickleball'].map((sport) => (
-          <div key={sport} className="flex items-center gap-4 mb-2">
-            <label className="flex items-center">
+          {/* Age range question */}
+          <p className="mb-2">What is your preferred age range for matching?</p>
+          <div className="flex gap-4">
+            <div>
+              <label htmlFor={`minAge-${sport}`} className="block mb-1">
+                Min Age:
+              </label>
               <input
-                type="checkbox"
-                checked={!!sports[sport]}
-                onChange={(e) => handleSportChange(sport, e.target.checked)}
-                className="mr-2"
+                type="number"
+                id={`minAge-${sport}`}
+                value={ageRanges[sport]?.[0] || 1}
+                onChange={(e) => handleAgeRangeChange(sport, 'min', e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur(); // Close the keyboard
+                  }
+                }}
+                min={1}
+                max={100}
+                className="w-20 p-2 border rounded"
               />
-              {sport}
-            </label>
-            {sports[sport] && (
-              <select
-                value={sports[sport]}
-                onChange={(e) => handleSkillLevelChange(sport, e.target.value)}
-                className="p-1 border rounded"
-              >
-                <option value="Newbie">Newbie</option>
-                <option value="Beginner">Beginner</option>
-                <option value="Intermediate">Intermediate</option>
-                <option value="Pro">Pro</option>
-              </select>
-            )}
+            </div>
+            <div>
+              <label htmlFor={`maxAge-${sport}`} className="block mb-1">
+                Max Age:
+              </label>
+              <input
+                type="number"
+                id={`maxAge-${sport}`}
+                value={ageRanges[sport]?.[1] || 100}
+                onChange={(e) => handleAgeRangeChange(sport, 'max', e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur(); // Close the keyboard
+                  }
+                }}
+                min={1}
+                max={100}
+                className="w-20 p-2 border rounded"
+              />
+            </div>
           </div>
-        ))}
-      </div>
 
-      {/* Save profile Button */}
-      <button
-        onClick={handleSaveProfile}
-        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mt-4 block mx-auto"
-      >
-        Save Profile
-      </button>
+          {/* Gender preference question */}
+          <p className="mt-4 mb-2">Would you prefer to match with people of the same gender?</p>
+          <div className="flex items-center gap-4">
+            {['Male', 'Female', 'Either'].map((option) => (
+              <label key={option} className="flex items-center">
+                <input
+                  type="radio"
+                  name={`genderPreference-${sport}`}
+                  value={option}
+                  checked={genderPreferences[sport] === option}
+                  onChange={() => handleGenderPreferenceChange(sport, option)}
+                  className="mr-2"
+                />
+                {option}
+              </label>
+            ))}
+          </div>
+
+          {/* Skill level question */}
+          <p className="mt-4 mb-2">Choose the skill level of players you'd like to match with:</p>
+          <div className="flex flex-col gap-2">
+            {['Newbie', 'Beginner', 'Intermediate', 'Pro'].map((level) => (
+              <label key={level} className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={(skillLevels[sport] || []).includes(level)}
+                  onChange={(e) => handleSkillLevelChange(sport, level, e.target.checked)}
+                  className="mr-2"
+                />
+                {level}
+              </label>
+            ))}
+          </div>
+
+          {/* Location preference question */}
+          <p className="mt-4 mb-2">Choose preferred location to find matches:</p>
+          <div className="flex flex-col gap-2">
+            {['North', 'South', 'East', 'West', 'Central'].map((location) => (
+              <label key={location} className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={(locationPreferences[sport] || []).includes(location)}
+                  onChange={(e) => handleLocationPreferenceChange(sport, location, e.target.checked)}
+                  className="mr-2"
+                />
+                {location}
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Submit button */}
+      <div className="flex justify-center mt-4">
+        <button
+          onClick={handleSubmit}
+          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+        >
+          Submit
+        </button>
+      </div>
 
       {/* Notification Overlay */}
       {notification && (
@@ -298,7 +375,7 @@ export default function Home() {
                 onClick={() => setNotification(null)} // Close the notification
                 className="mt-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
               >
-                Got it!
+                Close
               </button>
             )}
           </div>
